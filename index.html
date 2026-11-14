@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Diagnóstico de audífonos</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+</head><body>
+<style>
+/* Página de prueba: arriba los valores de audio en vivo, abajo el registro de lo que el navegador avisa.
+   Fondo blanco y letra negra, como la app de lecturas. */
+:root {
+  color-scheme: light;
+  --papel: #ffffff;
+  --tinta: #000000;
+  --tenue: #4a525e;
+  --linea: #d3d9e1;
+  --acento: #1f4e86;
+  --marca: #fff0d4;
+  --f-ui: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --f-codigo: ui-monospace, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--papel); color: var(--tinta); font-family: var(--f-ui); font-size: 16px; line-height: 1.45; }
+main {
+  max-width: 40rem; margin: 0 auto; display: grid; gap: 14px;
+  padding-block: 16px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1 { margin: 0; font-size: 1.35rem; }
+ol.pasos { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; }
+.vivo { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 12px; border: 2px solid var(--acento); border-radius: 10px; font-family: var(--f-codigo); font-size: 0.92rem; }
+.vivo dt { color: var(--tenue); }
+.vivo dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; font-weight: 700; min-height: 44px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--linea); background: var(--papel); color: var(--acento); }
+button.principal { background: var(--acento); color: #fff; border-color: var(--acento); }
+#registro { list-style: none; margin: 0; padding: 0; font-family: var(--f-codigo); font-size: 0.88rem; display: grid; gap: 2px; }
+#registro li { padding: 4px 6px; border-bottom: 1px solid var(--linea); overflow-wrap: anywhere; }
+#registro li.fuerte { background: var(--marca); }
+</style>
+
+<main>
+  <h1>Diagnóstico de audífonos</h1>
+  <ol class="pasos">
+    <li>Abre esta página <b>sin</b> audífonos, toca <b>Pedir micrófono</b> y acepta si te lo pregunta.</li>
+    <li>Toca <b>Marcar aquí</b>.</li>
+    <li>Conecta los audífonos Bluetooth, espera 10 segundos y toca <b>Marcar aquí</b>.</li>
+    <li>Desconéctalos, espera 10 segundos y toca <b>Marcar aquí</b>.</li>
+    <li>Toma captura del registro (lo de abajo).</li>
+    <li>Si puedes, repite con audífonos de cable.</li>
+  </ol>
+  <dl class="vivo" id="vivo"></dl>
+  <div class="acciones">
+    <button type="button" id="empezar" class="principal">Empezar</button>
+    <button type="button" id="marcar">Marcar aquí</button>
+    <button type="button" id="micro">Pedir micrófono</button>
+    <button type="button" id="borrar">Borrar registro</button>
+  </div>
+  <ol id="registro"></ol>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var t0 = Date.now();
+  var lista = document.getElementById('registro');
+  var vivo = document.getElementById('vivo');
+  var ultimo = {};
+  var ctx = null;
+  var dispositivos = 'sin leer';
+
+  function hora() {
+    var s = (Date.now() - t0) / 1000;
+    var m = Math.floor(s / 60);
+    return (m < 10 ? '0' : '') + m + ':' + ('0' + (s % 60).toFixed(1)).slice(-4);
+  }
+  function anotar(txt, fuerte) {
+    var li = document.createElement('li');
+    li.textContent = hora() + '  ' + txt;
+    if (fuerte) li.className = 'fuerte';
+    lista.insertBefore(li, lista.firstChild);
+    while (lista.children.length > 150) lista.removeChild(lista.lastChild);
+  }
+  function ms(x) { return (typeof x === 'number') ? (x * 1000).toFixed(1) + ' ms' : 'no hay'; }
+
+  // Lista de dispositivos de audio y video que el navegador deja ver sin pedir permiso.
+  function leerDispositivos() {
+    var md = navigator.mediaDevices;
+    if (!md || !md.enumerateDevices) { dispositivos = 'no hay mediaDevices'; return; }
+    md.enumerateDevices().then(function (lista) {
+      var porTipo = {};
+      var nombres = [];
+      lista.forEach(function (d) {
+        porTipo[d.kind] = (porTipo[d.kind] || 0) + 1;
+        if (d.label) nombres.push(d.kind.replace('audio', 'a').replace('video', 'v') + ':' + d.label);
+      });
+      var txt = Object.keys(porTipo).sort().map(function (k) { return k + ' ' + porTipo[k]; }).join(' · ') || 'vacía';
+      if (nombres.length) txt += ' | ' + nombres.join(' ; ');
+      dispositivos = txt;
+    }).catch(function (e) { dispositivos = 'error ' + (e && e.name); });
+  }
+
+  function valores() {
+    var ses = navigator.audioSession;
+    return {
+      'dispositivos': dispositivos,
+      'audio': ctx ? ctx.state : 'sin empezar',
+      'latencia base': ctx ? ms(ctx.baseLatency) : '-',
+      'latencia salida': ctx ? ms(ctx.outputLatency) : '-',
+      'muestreo': ctx ? ctx.sampleRate + ' Hz' : '-',
+      'salida (sinkId)': ctx && 'sinkId' in ctx ? (typeof ctx.sinkId === 'string' ? (ctx.sinkId || 'predeterminada') : 'objeto') : 'no hay',
+      'audioSession': ses ? (ses.type + ' · ' + (ses.state || '?')) : 'no hay',
+      'visible / foco': document.visibilityState + ' / ' + (function () { try { return document.hasFocus(); } catch (e) { return 'error'; } })()
+    };
+  }
+  function pintar() {
+    var v = valores();
+    vivo.textContent = '';
+    Object.keys(v).forEach(function (k) {
+      var dt = document.createElement('dt'); dt.textContent = k;
+      var dd = document.createElement('dd'); dd.textContent = v[k];
+      vivo.appendChild(dt); vivo.appendChild(dd);
+      if (ultimo[k] !== undefined && ultimo[k] !== v[k]) {
+        anotar('cambió ' + k + ': ' + ultimo[k] + ' → ' + v[k], true);
+      }
+    });
+    ultimo = v;
+  }
+
+  // El audio sólo arranca con un toque. Suena en silencio (volumen 0) para que el sistema le asigne salida.
+  // Cualquier toque en la página lo arranca, no sólo el botón.
+  document.addEventListener('click', empezarAudio, true);
+  function empezarAudio() {
+    if (ctx && ctx.state === 'running') return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { anotar('este navegador no tiene AudioContext', true); return; }
+    if (!ctx) {
+      try {
+        ctx = new AC();
+        var g = ctx.createGain(); g.gain.value = 0; g.connect(ctx.destination);
+        var o = ctx.createOscillator(); o.connect(g); o.start();
+        ctx.addEventListener('statechange', function () { anotar('evento audio statechange → ' + ctx.state, true); pintar(); });
+        if ('onsinkchange' in ctx) ctx.addEventListener('sinkchange', function () { anotar('evento audio sinkchange', true); pintar(); });
+        anotar('audio creado');
+      } catch (e) { anotar('error al crear audio: ' + (e && e.message), true); return; }
+    }
+    ctx.resume().then(function () { anotar('audio en marcha · base ' + ms(ctx.baseLatency) + ' · salida ' + ms(ctx.outputLatency)); pintar(); })
+      .catch(function (e) { anotar('el audio no arrancó: ' + (e && e.name), true); });
+  }
+
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', function () { anotar('evento devicechange', true); leerDispositivos(); });
+  } else {
+    anotar('no se puede escuchar devicechange');
+  }
+  if (navigator.audioSession && navigator.audioSession.addEventListener) {
+    navigator.audioSession.addEventListener('statechange', function () { anotar('evento audioSession → ' + navigator.audioSession.state, true); });
+  }
+  if (navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: 'microphone' })
+      .then(function (p) { anotar('permiso de micrófono: ' + p.state); })
+      .catch(function () { anotar('permiso de micrófono: no se puede consultar'); });
+  }
+  ['visibilitychange'].forEach(function (ev) {
+    document.addEventListener(ev, function () { anotar('evento ' + ev + ' (' + document.visibilityState + ')'); });
+  });
+  ['blur', 'focus'].forEach(function (ev) {
+    window.addEventListener(ev, function () { anotar('evento ' + ev); });
+  });
+  document.getElementById('marcar').addEventListener('click', function () {
+    setTimeout(function () {
+      anotar('— marca — audio ' + (ctx ? ctx.state + ' · base ' + ms(ctx.baseLatency) + ' · salida ' + ms(ctx.outputLatency) : 'sin empezar') + ' · ' + dispositivos, true);
+    }, 300);
+  });
+  // Pide el micrófono sólo para que el navegador muestre los nombres de los dispositivos.
+  // No graba: cierra el micrófono en cuanto lo recibe.
+  document.getElementById('micro').addEventListener('click', function () {
+    var md = navigator.mediaDevices;
+    if (!md || !md.getUserMedia) { anotar('no hay getUserMedia', true); return; }
+    anotar('pidiendo micrófono…');
+    md.getUserMedia({ audio: true }).then(function (s) {
+      s.getTracks().forEach(function (t) { anotar('micrófono concedido: ' + (t.label || 'sin nombre'), true); t.stop(); });
+      return md.enumerateDevices();
+    }).then(function (lista) {
+      if (!lista) return;
+      lista.forEach(function (d) { anotar('· ' + d.kind + ': ' + (d.label || 'sin nombre'), true); });
+      leerDispositivos();
+    }).catch(function (e) { anotar('micrófono rechazado: ' + (e && e.name) + ' · ' + (e && e.message), true); });
+  });
+  document.getElementById('borrar').addEventListener('click', function () { lista.textContent = ''; t0 = Date.now(); anotar('registro borrado'); });
+
+  setInterval(leerDispositivos, 1000);
+  setInterval(pintar, 500);
+  anotar('página abierta · ' + navigator.userAgent.replace(/^Mozilla\/5\.0 /, ''));
+  leerDispositivos();
+  pintar();
+})();
+</script>
+
+</body>
+</html>
