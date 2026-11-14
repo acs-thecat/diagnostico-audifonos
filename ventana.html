@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Diagnóstico de ventana</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+</head><body>
+<style>
+/* Página de prueba de una sola columna: arriba los valores en vivo, abajo el registro de lo que el
+   navegador avisa. Fondo blanco y letra negra, como la app de lecturas. */
+:root {
+  color-scheme: light;
+  --papel: #ffffff;
+  --tinta: #000000;
+  --tenue: #4a525e;
+  --linea: #d3d9e1;
+  --acento: #1f4e86;
+  --marca: #fff0d4;
+  --f-ui: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --f-codigo: ui-monospace, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--papel); color: var(--tinta); font-family: var(--f-ui); font-size: 16px; line-height: 1.45; }
+main {
+  max-width: 40rem; margin: 0 auto; display: grid; gap: 14px;
+  padding-block: 16px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1 { margin: 0; font-size: 1.35rem; }
+ol.pasos { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; }
+.vivo { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 12px; border: 2px solid var(--acento); border-radius: 10px; font-family: var(--f-codigo); font-size: 0.92rem; }
+.vivo dt { color: var(--tenue); }
+.vivo dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; font-weight: 700; min-height: 44px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--linea); background: var(--papel); color: var(--acento); }
+#registro { list-style: none; margin: 0; padding: 0; font-family: var(--f-codigo); font-size: 0.88rem; display: grid; gap: 2px; }
+#registro li { padding: 4px 6px; border-bottom: 1px solid var(--linea); overflow-wrap: anywhere; }
+#registro li.fuerte { background: var(--marca); }
+</style>
+
+<main>
+  <h1>Diagnóstico de ventana</h1>
+  <ol class="pasos">
+    <li>Toca <b>Pantalla completa</b> y luego <b>Pantalla encendida</b>.</li>
+    <li>Pon esta pestaña en ventana flotante (o abre otra app flotante encima).</li>
+    <li>Usa la otra app unos 5 segundos.</li>
+    <li>Regresa aquí y toma captura de toda la pantalla, desde arriba.</li>
+  </ol>
+  <dl class="vivo" id="vivo"></dl>
+  <div class="acciones">
+    <button type="button" id="marcar">Marcar aquí</button>
+    <button type="button" id="completa">Pantalla completa</button>
+    <button type="button" id="despierta">Pantalla encendida</button>
+    <button type="button" id="borrar">Borrar registro</button>
+  </div>
+  <ol id="registro"></ol>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var t0 = Date.now();
+  var lista = document.getElementById('registro');
+  var vivo = document.getElementById('vivo');
+  var ultimo = {};
+
+  function hora() {
+    var s = (Date.now() - t0) / 1000;
+    var m = Math.floor(s / 60);
+    return (m < 10 ? '0' : '') + m + ':' + ('0' + (s % 60).toFixed(1)).slice(-4);
+  }
+  function anotar(txt, fuerte) {
+    var li = document.createElement('li');
+    li.textContent = hora() + '  ' + txt;
+    if (fuerte) li.className = 'fuerte';
+    lista.insertBefore(li, lista.firstChild);
+    while (lista.children.length > 120) lista.removeChild(lista.lastChild);
+  }
+  function foco() { try { return document.hasFocus(); } catch (e) { return 'error'; } }
+  function valores() {
+    var vv = window.visualViewport;
+    return {
+      'visible': document.visibilityState,
+      'foco': String(foco()),
+      'ventana': window.innerWidth + ' × ' + window.innerHeight,
+      'externa': window.outerWidth + ' × ' + window.outerHeight,
+      'vista': vv ? Math.round(vv.width) + ' × ' + Math.round(vv.height) + ' · escala ' + vv.scale.toFixed(2) : 'no hay',
+      'pantalla': screen.width + ' × ' + screen.height + ' · disp. ' + (screen.availWidth + ' × ' + screen.availHeight),
+      'densidad': String(window.devicePixelRatio),
+      'orientación': (screen.orientation && screen.orientation.type) || String(window.orientation),
+      'completa': String(!!(document.fullscreenElement || document.webkitFullscreenElement)),
+      'activo': document.activeElement ? document.activeElement.tagName : 'ninguno'
+    };
+  }
+  function pintar() {
+    var v = valores();
+    vivo.textContent = '';
+    Object.keys(v).forEach(function (k) {
+      var dt = document.createElement('dt'); dt.textContent = k;
+      var dd = document.createElement('dd'); dd.textContent = v[k];
+      vivo.appendChild(dt); vivo.appendChild(dd);
+      if (ultimo[k] !== undefined && ultimo[k] !== v[k] && k !== 'activo') {
+        anotar('cambió ' + k + ': ' + ultimo[k] + ' → ' + v[k], true);
+      }
+    });
+    ultimo = v;
+  }
+
+  ['visibilitychange', 'freeze', 'resume', 'fullscreenchange'].forEach(function (ev) {
+    document.addEventListener(ev, function () { anotar('evento ' + ev + ' (' + document.visibilityState + ')', true); pintar(); });
+  });
+  ['blur', 'focus', 'pagehide', 'pageshow', 'resize', 'orientationchange'].forEach(function (ev) {
+    window.addEventListener(ev, function () { anotar('evento ' + ev + ' · foco ' + foco() + ' · ' + window.innerWidth + '×' + window.innerHeight, true); pintar(); });
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function () {
+      anotar('evento visualViewport.resize · ' + Math.round(visualViewport.width) + '×' + Math.round(visualViewport.height) + ' escala ' + visualViewport.scale.toFixed(2), true);
+      pintar();
+    });
+  }
+  ['pointerdown', 'keydown'].forEach(function (ev) {
+    window.addEventListener(ev, function (e) { anotar('toque ' + ev + (e.pointerType ? ' (' + e.pointerType + ')' : '')); pintar(); }, true);
+  });
+  document.getElementById('completa').addEventListener('click', function () {
+    var d = document.documentElement;
+    var f = d.requestFullscreen || d.webkitRequestFullscreen;
+    if (!f) { anotar('no hay pantalla completa', true); return; }
+    try {
+      var p = f.call(d, { navigationUI: 'hide' });
+      if (p && p.then) p.then(function () { anotar('pantalla completa: sí', true); }, function (e) { anotar('pantalla completa rechazada: ' + (e && e.name) + ' · ' + (e && e.message), true); });
+    } catch (e) { anotar('pantalla completa error: ' + (e && e.message), true); }
+  });
+  var candado = null;
+  document.getElementById('despierta').addEventListener('click', function () {
+    if (!('wakeLock' in navigator)) { anotar('no hay wakeLock', true); return; }
+    navigator.wakeLock.request('screen').then(function (l) {
+      candado = l; anotar('pantalla encendida: sí', true);
+      l.addEventListener('release', function () { anotar('pantalla encendida: se soltó', true); candado = null; });
+    }).catch(function (e) { anotar('pantalla encendida rechazada: ' + (e && e.name) + ' · ' + (e && e.message), true); });
+  });
+  document.getElementById('marcar').addEventListener('click', function () { anotar('— marca —', true); });
+  document.getElementById('borrar').addEventListener('click', function () { lista.textContent = ''; t0 = Date.now(); anotar('registro borrado'); });
+
+  setInterval(pintar, 500);
+  anotar('página abierta');
+  pintar();
+})();
+</script>
+
+</body>
+</html>
